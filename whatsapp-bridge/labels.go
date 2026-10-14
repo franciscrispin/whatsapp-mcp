@@ -207,4 +207,6 @@ func registerLabelEndpoints(mux *http.ServeMux, auth func(http.HandlerFunc) http
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": result})
 	}))
+
+	registerLabelApplyEndpoint(mux, auth, client, messageStore)
 }

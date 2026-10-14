@@ -1507,3 +1507,58 @@ def get_label_chats(label_id: str = "", label_name: str = "", limit: int = 1000)
         "without_phone_number": sum(1 for c in chats if not c["is_group"] and not c["phone_number"]),
         "chats": chats,
     }
+
+
+def set_chat_label(chat_jid: str, label_name: str, labeled: bool = True) -> dict[str, Any]:
+    """Apply (or remove) an existing label on one chat, by label name.
+
+    The name is resolved against the local label store; an unknown name is an
+    error, never an implicit create.
+    """
+    if not chat_jid or not label_name:
+        return {"success": False, "message": "chat_jid and label_name are required"}
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        try:
+            if not _labels_table_exists(conn):
+                return {"success": False, "message": "No label store yet: the bridge has not synced labels"}
+            live = conn.execute("SELECT label_id, name FROM labels WHERE deleted = 0").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        return {"success": False, "message": f"Database error: {e}"}
+
+    wanted = _clean_label_name(label_name).casefold()
+    matches = [r for r in live if _clean_label_name(r[1]).casefold() == wanted]
+    if not matches:
+        known = ", ".join(sorted(_clean_label_name(r[1]) for r in live))
+        return {"success": False, "message": f"No such label. Known labels: {known}"}
+    if len(matches) > 1:
+        return {"success": False, "message": "Label name is ambiguous; rename one of the labels in WhatsApp first"}
+    label_id, name = matches[0][0], _clean_label_name(matches[0][1])
+
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/labels/apply",
+            json={"chat_jid": chat_jid, "label_id": label_id, "labeled": labeled},
+            headers=_bridge_headers(),
+            timeout=45,
+        )
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {e}"}
+    try:
+        body = response.json()
+    except ValueError:
+        return {"success": False, "message": f"Error: HTTP {response.status_code} - {response.text}"}
+    if response.status_code != 200 or not body.get("success"):
+        return {"success": False, "message": body.get("message", f"HTTP {response.status_code}")}
+
+    result = body.get("result", {})
+    return {
+        "success": True,
+        "message": f"{'Applied' if labeled else 'Removed'} label {name}",
+        "label": {"label_id": label_id, "name": name},
+        "chat_jid": result.get("chat_jid"),
+        "labeled": labeled,
+        "changed": result.get("was_labeled") != labeled,
+    }

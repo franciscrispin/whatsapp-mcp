@@ -160,3 +160,66 @@ def test_label_tools_before_bridge_has_synced(tmp_path, monkeypatch):
     assert mcp_main.list_labels() == []
     assert mcp_main.get_chat_labels(PHONE) == []
     assert mcp_main.get_label_chats(label_name="TZ")["success"] is False
+
+
+class _BridgeResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+        self.text = str(body)
+
+    def json(self):
+        return self._body
+
+
+@pytest.fixture
+def bridge_calls(monkeypatch):
+    calls = []
+    reply = {"status": 200, "body": {"success": True, "result": {"chat_jid": f"{LID}@lid", "was_labeled": False}}}
+
+    def fake_post(url, json, headers=None, timeout=None):
+        calls.append((url, json))
+        return _BridgeResponse(reply["status"], reply["body"])
+
+    monkeypatch.setattr(whatsapp.requests, "post", fake_post)
+    return calls, reply
+
+
+def test_set_chat_label_resolves_name_and_calls_bridge(label_dbs, bridge_calls):
+    calls, _ = bridge_calls
+    result = mcp_main.set_chat_label(PHONE, "won - status")
+    assert result["success"] is True
+    assert result["label"] == {"label_id": "15", "name": "Won - Status"}
+    assert result["chat_jid"] == f"{LID}@lid"
+    assert result["changed"] is True
+    url, payload = calls[0]
+    assert url.endswith("/labels/apply")
+    # The bridge resolves the phone number to a LID; the tool passes it through.
+    assert payload == {"chat_jid": PHONE, "label_id": "15", "labeled": True}
+
+
+def test_set_chat_label_removal_and_no_op(label_dbs, bridge_calls):
+    calls, reply = bridge_calls
+    reply["body"] = {"success": True, "result": {"chat_jid": f"{LID}@lid", "was_labeled": False}}
+    result = mcp_main.set_chat_label(f"{LID}@lid", "TZ", labeled=False)
+    assert calls[0][1]["labeled"] is False
+    assert result["message"] == "Removed label TZ"
+    assert result["changed"] is False
+
+
+@pytest.mark.parametrize("name", ["Zanzibar", "Old label"])
+def test_set_chat_label_never_creates_or_uses_deleted_labels(label_dbs, bridge_calls, name):
+    calls, _ = bridge_calls
+    result = mcp_main.set_chat_label(PHONE, name)
+    assert result["success"] is False
+    assert "Known labels" in result["message"]
+    assert calls == []
+
+
+def test_set_chat_label_reports_bridge_errors(label_dbs, bridge_calls):
+    _, reply = bridge_calls
+    reply["status"] = 404
+    reply["body"] = {"success": False, "message": "no LID known for this phone number: 6599999999"}
+    result = mcp_main.set_chat_label("6599999999", "TZ")
+    assert result["success"] is False
+    assert "no LID known" in result["message"]
