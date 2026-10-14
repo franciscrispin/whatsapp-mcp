@@ -22,10 +22,16 @@ from whatsapp import (
     get_chat as whatsapp_get_chat,
 )
 from whatsapp import (
+    get_chat_labels as whatsapp_get_chat_labels,
+)
+from whatsapp import (
     get_contact_chats as whatsapp_get_contact_chats,
 )
 from whatsapp import (
     get_direct_chat_by_contact as whatsapp_get_direct_chat_by_contact,
+)
+from whatsapp import (
+    get_label_chats as whatsapp_get_label_chats,
 )
 from whatsapp import (
     get_last_interaction as whatsapp_get_last_interaction,
@@ -38,6 +44,9 @@ from whatsapp import (
 )
 from whatsapp import (
     list_chats as whatsapp_list_chats,
+)
+from whatsapp import (
+    list_labels as whatsapp_list_labels,
 )
 from whatsapp import (
     list_messages as whatsapp_list_messages,
@@ -587,6 +596,61 @@ def transcribe_audio(message_id: str, chat_jid: str, force: bool = False) -> dic
         "message": "Transcribed",
         "transcript": f"{transcription.label(model, provider)}{text}",
     }
+
+
+@mcp.tool()
+def list_labels(include_deleted: bool = False) -> list[dict[str, Any]]:
+    """List the WhatsApp Business labels ("Lists" in the app) on this account.
+
+    Read-only. Labels are synced by the bridge into the local database, so this
+    works even if the bridge is down (it then shows the last synced state).
+
+    Args:
+        include_deleted: Also return labels that were deleted in WhatsApp (default False)
+
+    Returns:
+        A list of labels, each with label_id, name, color (WhatsApp palette index, not RGB),
+        deleted, and chat_count (chats currently carrying the label)
+    """
+    return whatsapp_list_labels(include_deleted)
+
+
+@mcp.tool()
+def get_chat_labels(chat_jid: str) -> list[dict[str, Any]]:
+    """Get the labels currently applied to one WhatsApp chat.
+
+    Read-only.
+
+    Args:
+        chat_jid: The chat to look up: a phone number, a phone JID ("12025551234@s.whatsapp.net"),
+                  a LID ("184125298348272@lid") or a group JID ("123456789@g.us")
+
+    Returns:
+        A list of labels (label_id, name, color). Empty if the chat has none.
+    """
+    return whatsapp_get_chat_labels(chat_jid)
+
+
+@mcp.tool()
+def get_label_chats(label_id: str = "", label_name: str = "", limit: int = 1000) -> dict[str, Any]:
+    """List the chats currently carrying a WhatsApp label.
+
+    Read-only. Look the label up by label_id or by label_name (case-insensitive).
+
+    Args:
+        label_id: The label's id, as returned by list_labels
+        label_name: The label's name, e.g. "Won - Status"; used when label_id is empty
+        limit: Maximum number of chats to return (default 1000)
+
+    Returns:
+        A dictionary with success, label, total, returned, without_phone_number and chats.
+        Each chat has jid (phone JID when resolvable), label_jid (the JID WhatsApp used),
+        phone_number, lid, is_group, name, and in_archive (False when no message history
+        for that chat was ever synced). WhatsApp keys most one-to-one labels by LID, and a
+        LID that has never been seen alongside its phone number cannot be resolved, so
+        phone_number can be null.
+    """
+    return whatsapp_get_label_chats(label_id, label_name, limit)
 
 
 def shutdown_handler(signum, frame):

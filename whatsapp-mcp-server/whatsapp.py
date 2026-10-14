@@ -1304,3 +1304,206 @@ def download_media(message_id: str, chat_jid: str) -> str | None:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+
+# --- Labels ------------------------------------------------------------------
+# The bridge stores WhatsApp Business labels ("Lists" in the app) in
+# messages.db: `labels` and `label_chats` (see whatsapp-bridge/labels.go).
+# label_chats.chat_jid is kept exactly as WhatsApp sent it, which for
+# one-to-one chats is usually an @lid JID, so reads resolve it to a phone JID
+# through whatsmeow_lid_map. Removed associations and deleted labels are kept
+# as rows (labeled = 0 / deleted = 1) and filtered out here.
+
+# WhatsApp prefixes its preset labels ("Favorites", "Unread", "Groups") with an
+# invisible left-to-right mark.
+_LABEL_NAME_JUNK = "‎‏ "
+
+
+def _clean_label_name(name: str | None) -> str:
+    return (name or "").strip(_LABEL_NAME_JUNK)
+
+
+def _labels_table_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'label_chats'").fetchone()
+    return row is not None
+
+
+def _open_whatsmeow_ro() -> sqlite3.Connection | None:
+    if not os.path.isfile(WHATSMEOW_DB_PATH):
+        return None
+    try:
+        return sqlite3.connect(f"file:{WHATSMEOW_DB_PATH}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+
+
+def _describe_label_chat(
+    label_jid: str, msg_conn: sqlite3.Connection, wa_conn: sqlite3.Connection | None
+) -> dict[str, Any]:
+    """Turn a label_chats.chat_jid into something a caller can act on."""
+    user, _, server = label_jid.partition("@")
+    phone: str | None = None
+    lid: str | None = None
+    if server == "lid":
+        lid = user
+        if wa_conn is not None:
+            try:
+                row = wa_conn.execute("SELECT pn FROM whatsmeow_lid_map WHERE lid = ?", (user,)).fetchone()
+                phone = row[0] if row else None
+            except sqlite3.Error:
+                pass
+    elif server == "s.whatsapp.net":
+        phone = user
+    jid = f"{phone}@s.whatsapp.net" if phone else label_jid
+
+    candidates = list(dict.fromkeys([jid, label_jid]))
+    name: str | None = None
+    in_archive = False
+    for candidate in candidates:
+        row = msg_conn.execute("SELECT name FROM chats WHERE jid = ?", (candidate,)).fetchone()
+        if row:
+            in_archive = True
+            name = name or row[0]
+    if not name and wa_conn is not None:
+        placeholders = ",".join("?" * len(candidates))
+        try:
+            row = wa_conn.execute(
+                "SELECT full_name, push_name, first_name, business_name FROM whatsmeow_contacts "
+                f"WHERE their_jid IN ({placeholders}) LIMIT 1",
+                candidates,
+            ).fetchone()
+            if row:
+                name = row[0] or row[1] or row[2] or row[3] or None
+        except sqlite3.Error:
+            pass
+
+    return {
+        "jid": jid,
+        "label_jid": label_jid,
+        "phone_number": phone,
+        "lid": lid,
+        "is_group": server == "g.us",
+        "name": name,
+        # False means the chat carries the label but no message history for it
+        # was ever synced to this bridge.
+        "in_archive": in_archive,
+    }
+
+
+def list_labels(include_deleted: bool = False) -> list[dict[str, Any]]:
+    """List labels with the number of chats currently carrying each one."""
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        try:
+            if not _labels_table_exists(conn):
+                return []
+            rows = conn.execute(
+                """
+                SELECT l.label_id, l.name, l.color, l.deleted,
+                       (SELECT COUNT(*) FROM label_chats lc
+                         WHERE lc.label_id = l.label_id AND lc.labeled = 1)
+                FROM labels l
+                WHERE ? OR l.deleted = 0
+                """,
+                (include_deleted,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return []
+
+    labels = [
+        {
+            "label_id": r[0],
+            "name": _clean_label_name(r[1]),
+            "color": r[2],
+            "deleted": bool(r[3]),
+            "chat_count": r[4],
+        }
+        for r in rows
+    ]
+    labels.sort(key=lambda lbl: (len(lbl["label_id"]), lbl["label_id"]))
+    return labels
+
+
+def get_chat_labels(chat_jid: str) -> list[dict[str, Any]]:
+    """Labels currently applied to one chat. Accepts a phone number, phone JID, LID or group JID."""
+    if chat_jid.endswith("@g.us"):
+        aliases = [chat_jid]
+    else:
+        aliases = [a for a in _sender_aliases(chat_jid) if "@" in a]
+    placeholders = ",".join("?" * len(aliases))
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        try:
+            if not _labels_table_exists(conn):
+                return []
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT l.label_id, l.name, l.color
+                FROM label_chats lc JOIN labels l ON l.label_id = lc.label_id
+                WHERE lc.chat_jid IN ({placeholders}) AND lc.labeled = 1 AND l.deleted = 0
+                """,
+                aliases,
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return []
+    labels = [{"label_id": r[0], "name": _clean_label_name(r[1]), "color": r[2]} for r in rows]
+    labels.sort(key=lambda lbl: (len(lbl["label_id"]), lbl["label_id"]))
+    return labels
+
+
+def get_label_chats(label_id: str = "", label_name: str = "", limit: int = 1000) -> dict[str, Any]:
+    """Chats currently carrying a label, looked up by id or by name (case-insensitive)."""
+    if not label_id and not label_name:
+        return {"success": False, "message": "Pass label_id or label_name"}
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+    except sqlite3.Error as e:
+        return {"success": False, "message": f"Database error: {e}"}
+    wa_conn = _open_whatsmeow_ro()
+    try:
+        if not _labels_table_exists(conn):
+            return {"success": False, "message": "No label store yet: the bridge has not synced labels"}
+
+        live = conn.execute("SELECT label_id, name, color FROM labels WHERE deleted = 0").fetchall()
+        if label_id:
+            matches = [r for r in live if r[0] == label_id]
+        else:
+            wanted = _clean_label_name(label_name).casefold()
+            matches = [r for r in live if _clean_label_name(r[1]).casefold() == wanted]
+        if not matches:
+            known = ", ".join(sorted(_clean_label_name(r[1]) for r in live))
+            return {"success": False, "message": f"No such label. Known labels: {known}"}
+        if len(matches) > 1:
+            ids = ", ".join(r[0] for r in matches)
+            return {"success": False, "message": f"Label name is ambiguous (ids {ids}); pass label_id"}
+        lid, name, color = matches[0]
+
+        jids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT chat_jid FROM label_chats WHERE label_id = ? AND labeled = 1 ORDER BY chat_jid",
+                (lid,),
+            ).fetchall()
+        ]
+        chats = [_describe_label_chat(j, conn, wa_conn) for j in jids[:limit]]
+    except sqlite3.Error as e:
+        return {"success": False, "message": f"Database error: {e}"}
+    finally:
+        conn.close()
+        if wa_conn is not None:
+            wa_conn.close()
+
+    return {
+        "success": True,
+        "label": {"label_id": lid, "name": _clean_label_name(name), "color": color},
+        "total": len(jids),
+        "returned": len(chats),
+        "without_phone_number": sum(1 for c in chats if not c["is_group"] and not c["phone_number"]),
+        "chats": chats,
+    }

@@ -458,6 +458,39 @@ Get messages around a specific message for context.
 - `before` (optional): Number of messages before (default 5)
 - `after` (optional): Number of messages after (default 5)
 
+### Label Operations
+
+Read-only access to WhatsApp Business labels ("Lists" in the app). The bridge
+must be a version that stores labels in `messages.db`; on an older bridge these
+tools return empty results.
+
+#### `list_labels`
+
+List the labels on the account, with how many chats carry each.
+
+**Parameters:**
+
+- `include_deleted` (optional): Also return labels deleted in WhatsApp (default false)
+
+#### `get_chat_labels`
+
+Get the labels applied to one chat.
+
+**Parameters:**
+
+- `chat_jid` (required): Phone number, phone JID, LID or group JID
+
+#### `get_label_chats`
+
+List the chats carrying a label. One-to-one chats are resolved from LID to
+phone number where `whatsmeow_lid_map` allows; `without_phone_number` counts
+the ones that could not be.
+
+**Parameters:**
+
+- `label_id` or `label_name` (one required): The label to look up; the name is case-insensitive
+- `limit` (optional): Maximum chats to return (default 1000)
+
 ## Configuration
 
 Copy `.env.example` to `.env` and configure as needed:
@@ -959,12 +992,13 @@ flowchart LR
         HEALTH["/api/health"]
     end
 
-    subgraph MCPTools["MCP Tools (15 total)"]
+    subgraph MCPTools["MCP Tools (20 total)"]
         direction TB
         CONT["Contact Tools<br/>search_contacts, get_contact"]
         MSG["Message Tools<br/>list_messages, send_message, etc."]
         CHAT["Chat Tools<br/>list_chats, get_chat, etc."]
         MEDIA["Media Tools<br/>send_file, download_media, etc."]
+        LABEL["Label Tools<br/>list_labels, get_label_chats, etc."]
     end
 
     MCPTools -->|HTTP Requests| GoAPI
