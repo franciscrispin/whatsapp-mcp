@@ -295,6 +295,9 @@ func ensureMessageStoreSchema(db *sql.DB) error {
 	if err := ensureColumn(db, "messages", "quoted_message_id", "TEXT"); err != nil {
 		return fmt.Errorf("failed to ensure messages.quoted_message_id column: %w", err)
 	}
+	if err := ensureLabelSchema(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2396,6 +2399,9 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 	// On-demand history sync endpoint (see history_ondemand.go)
 	registerHistoryEndpoint(mux, auth, client, messageStore)
 
+	// Label store endpoints (see labels.go)
+	registerLabelEndpoints(mux, auth, client, messageStore)
+
 	// Health check endpoint
 	mux.HandleFunc("/api/health", auth(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -3101,6 +3107,10 @@ func main() {
 
 		case *events.Connected:
 			logger.Infof("✓ Successfully connected to WhatsApp servers")
+			go resyncLabelsIfEmpty(client, messageStore)
+
+		case *events.LabelEdit, *events.LabelAssociationChat:
+			handleLabelEvent(messageStore, v)
 
 		case *events.LoggedOut:
 			logger.Warnf("⚠️  Device logged out, please scan QR code to log in again")

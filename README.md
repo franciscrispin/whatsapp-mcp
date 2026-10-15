@@ -849,6 +849,66 @@ CREATE TABLE calls (
   calls via `CallOfferNotice` include a `Media` field and are recorded
   accurately as voice or video.
 
+## Labels (WhatsApp Business)
+
+WhatsApp Business labels ("Lists" in newer app versions) are synced as app
+state, not as messages. whatsmeow emits `LabelEdit` and
+`LabelAssociationChat` events but keeps nothing decoded, so the bridge stores
+them in two tables in `messages.db`. The store is **read-only towards
+WhatsApp**: nothing here creates, applies or removes a label.
+
+### Schema
+
+```sql
+CREATE TABLE labels (
+    label_id   TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    color      INTEGER NOT NULL,   -- palette index (0-19), not an RGB value
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP NOT NULL,
+    synced_at  INTEGER NOT NULL    -- unix nanoseconds, last write by the bridge
+);
+
+CREATE TABLE label_chats (
+    label_id   TEXT NOT NULL,
+    chat_jid   TEXT NOT NULL,      -- as WhatsApp sent it, usually @lid for 1:1 chats
+    labeled    INTEGER NOT NULL,   -- 0 once the label has been removed
+    updated_at TIMESTAMP NOT NULL,
+    synced_at  INTEGER NOT NULL,
+    PRIMARY KEY (label_id, chat_jid)
+);
+```
+
+Removed labels and associations are kept with `deleted = 1` / `labeled = 0`
+rather than deleted. One-to-one chats usually arrive as `@lid` JIDs; resolve
+them to phone numbers through `whatsmeow_lid_map` in `whatsapp.db`.
+
+### Full resync
+
+On first connect with an empty `labels` table the bridge replays the full
+label state once. To force it again:
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/labels/resync \
+  -H "Authorization: Bearer $(cat whatsapp-bridge/store/.bridge-token)"
+```
+
+```json
+{"success": true, "result": {"labels": 21, "associations": 2161,
+ "labels_marked_removed": 0, "associations_marked_removed": 0}}
+```
+
+### Caveats
+
+- **Removals can be missed between resyncs.** whatsmeow drops app state
+  mutations with a REMOVE operation before dispatching them, so some
+  removals never produce an event. A full resync replays the current state
+  and marks anything it no longer mentions as removed; run it if the tables
+  look stale.
+- **Labels on individual messages are not stored**, only labels on chats.
+- **Chats with no `whatsmeow_lid_map` entry** have no known phone number.
+  This is common for contacts whose history was never synced.
+
 ## Architecture
 
 ```mermaid
@@ -895,6 +955,7 @@ flowchart LR
         REACT["/api/react"]
         TYPE["/api/typing"]
         HIST["/api/history"]
+        LABELS["/api/labels/resync"]
         HEALTH["/api/health"]
     end
 
