@@ -69,6 +69,9 @@ from whatsapp import (
 from whatsapp import (
     send_reaction as whatsapp_send_reaction,
 )
+from whatsapp import (
+    set_chat_label as whatsapp_set_chat_label,
+)
 
 # Initialize FastMCP server. Env-var handling is deferred to the __main__ block
 # so importing this module never parses env vars or exits the process.
@@ -651,6 +654,27 @@ def get_label_chats(label_id: str = "", label_name: str = "", limit: int = 1000)
         phone_number can be null.
     """
     return whatsapp_get_label_chats(label_id, label_name, limit)
+
+
+@mcp.tool()
+def set_chat_label(chat_jid: str, label_name: str, labeled: bool = True) -> dict[str, Any]:
+    """Apply or remove an existing WhatsApp Business label on one chat.
+
+    This writes to WhatsApp: the change syncs to every device on the account. It does
+    not message the contact, and the contact cannot see labels. It only works with
+    labels that already exist (see list_labels); it never creates one.
+
+    Args:
+        chat_jid: The chat: a phone number, phone JID, LID or group JID
+        label_name: The label's name as list_labels shows it, e.g. "TZ" (case-insensitive)
+        labeled: True to apply the label (default), False to remove it
+
+    Returns:
+        A dictionary with success, message, label, chat_jid (the JID WhatsApp keys the
+        label by), labeled, and changed (False if the chat was already in that state).
+        Fails if the phone number has no known LID on this bridge.
+    """
+    return whatsapp_set_chat_label(chat_jid, label_name, labeled)
 
 
 def shutdown_handler(signum, frame):

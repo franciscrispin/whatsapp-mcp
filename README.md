@@ -460,9 +460,9 @@ Get messages around a specific message for context.
 
 ### Label Operations
 
-Read-only access to WhatsApp Business labels ("Lists" in the app). The bridge
-must be a version that stores labels in `messages.db`; on an older bridge these
-tools return empty results.
+WhatsApp Business labels ("Lists" in the app). The bridge must be a version
+that stores labels in `messages.db`; on an older bridge the read tools return
+empty results.
 
 #### `list_labels`
 
@@ -490,6 +490,17 @@ the ones that could not be.
 
 - `label_id` or `label_name` (one required): The label to look up; the name is case-insensitive
 - `limit` (optional): Maximum chats to return (default 1000)
+
+#### `set_chat_label`
+
+Apply or remove an existing label on one chat. **Writes to WhatsApp**; the
+contact is not messaged. Never creates a label: an unknown name is an error.
+
+**Parameters:**
+
+- `chat_jid` (required): Phone number, phone JID, LID or group JID
+- `label_name` (required): The label's name, case-insensitive
+- `labeled` (optional): `true` to apply (default), `false` to remove
 
 ## Configuration
 
@@ -887,8 +898,9 @@ CREATE TABLE calls (
 WhatsApp Business labels ("Lists" in newer app versions) are synced as app
 state, not as messages. whatsmeow emits `LabelEdit` and
 `LabelAssociationChat` events but keeps nothing decoded, so the bridge stores
-them in two tables in `messages.db`. The store is **read-only towards
-WhatsApp**: nothing here creates, applies or removes a label.
+them in two tables in `messages.db`. The only label write is applying or
+removing an existing label on one chat (`/api/labels/apply`, below). Nothing
+creates, renames or deletes a label.
 
 ### Schema
 
@@ -930,6 +942,28 @@ curl -X POST http://127.0.0.1:8080/api/labels/resync \
 {"success": true, "result": {"labels": 21, "associations": 2161,
  "labels_marked_removed": 0, "associations_marked_removed": 0}}
 ```
+
+### Applying a label to a chat
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/labels/apply \
+  -H "Authorization: Bearer $(cat whatsapp-bridge/store/.bridge-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"chat_jid": "12025551234", "label_id": "7", "labeled": true}'
+```
+
+| Field | Required | Description |
+| --------- | -------- | ------------------------------------------------------ |
+| `chat_jid` | yes | Phone number, phone JID, LID or group JID |
+| `label_id` | yes | An existing label that has not been deleted; unknown ids are refused |
+| `labeled` | yes | `true` applies the label, `false` removes it |
+
+- **One-to-one chats are labelled by LID.** A phone number is mapped through
+  `whatsmeow_lid_map` only; if it has no entry the call returns `404` rather
+  than sending a lookup to WhatsApp.
+- **At most 10 label writes per minute**, then `429`.
+- The contact is not messaged and cannot see labels. The change syncs to
+  every device on the account.
 
 ### Caveats
 
@@ -989,16 +1023,17 @@ flowchart LR
         TYPE["/api/typing"]
         HIST["/api/history"]
         LABELS["/api/labels/resync"]
+        APPLY["/api/labels/apply"]
         HEALTH["/api/health"]
     end
 
-    subgraph MCPTools["MCP Tools (20 total)"]
+    subgraph MCPTools["MCP Tools (21 total)"]
         direction TB
         CONT["Contact Tools<br/>search_contacts, get_contact"]
         MSG["Message Tools<br/>list_messages, send_message, etc."]
         CHAT["Chat Tools<br/>list_chats, get_chat, etc."]
         MEDIA["Media Tools<br/>send_file, download_media, etc."]
-        LABEL["Label Tools<br/>list_labels, get_label_chats, etc."]
+        LABEL["Label Tools<br/>list_labels, set_chat_label, etc."]
     end
 
     MCPTools -->|HTTP Requests| GoAPI
