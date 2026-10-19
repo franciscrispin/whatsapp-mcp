@@ -2401,6 +2401,7 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 
 	// Label store endpoints (see labels.go)
 	registerLabelEndpoints(mux, auth, client, messageStore)
+	registerContactRenameEndpoint(mux, auth, client)
 
 	// Health check endpoint
 	mux.HandleFunc("/api/health", auth(func(w http.ResponseWriter, r *http.Request) {

@@ -55,6 +55,9 @@ from whatsapp import (
     mark_messages_read as whatsapp_mark_messages_read,
 )
 from whatsapp import (
+    rename_contact as whatsapp_rename_contact,
+)
+from whatsapp import (
     search_contacts as whatsapp_search_contacts,
 )
 from whatsapp import (
@@ -675,6 +678,27 @@ def set_chat_label(chat_jid: str, label_name: str, labeled: bool = True) -> dict
         Fails if the phone number has no known LID on this bridge.
     """
     return whatsapp_set_chat_label(chat_jid, label_name, labeled)
+
+
+@mcp.tool()
+def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bool = False) -> dict[str, Any]:
+    """Change the saved name of one contact on this WhatsApp account.
+
+    This writes to WhatsApp: the new name syncs to every device on the account. It
+    does not message the contact. It never writes to the phone's own address book.
+    Use dry_run first to see the current name and what would change.
+
+    Args:
+        phone: The contact: a phone number with country code, phone JID or LID
+        full_name: The new full name, e.g. "Ann Tan (TZ Jul 27)"
+        first_name: Optional first name; empty leaves it blank
+        dry_run: True to show the change without sending it (default False)
+
+    Returns:
+        A dictionary with success, message, phone_jid, before and after
+        ({full_name, first_name}), dry_run, and changed.
+    """
+    return whatsapp_rename_contact(phone, full_name, first_name, dry_run)
 
 
 def shutdown_handler(signum, frame):
