@@ -1562,3 +1562,43 @@ def set_chat_label(chat_jid: str, label_name: str, labeled: bool = True) -> dict
         "labeled": labeled,
         "changed": result.get("was_labeled") != labeled,
     }
+
+
+def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bool = False) -> dict[str, Any]:
+    """Set the saved name of one contact on this WhatsApp account.
+
+    The bridge never asks the phone to write the name into its own address book.
+    """
+    if not phone or not full_name or not full_name.strip():
+        return {"success": False, "message": "phone and full_name are required"}
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/contacts/rename",
+            json={"phone": phone, "full_name": full_name, "first_name": first_name, "dry_run": dry_run},
+            headers=_bridge_headers(),
+            timeout=45,
+        )
+    except requests.RequestException as e:
+        return {"success": False, "message": f"Request error: {e}"}
+    try:
+        body = response.json()
+    except ValueError:
+        return {"success": False, "message": f"Error: HTTP {response.status_code} - {response.text}"}
+    if response.status_code != 200 or not body.get("success"):
+        return {"success": False, "message": body.get("message", f"HTTP {response.status_code}")}
+
+    result = body.get("result", {})
+    before, after = result.get("before", {}), result.get("after", {})
+    if dry_run:
+        message = f"Dry run: would rename {before.get('full_name') or '(no saved name)'} to {after.get('full_name')}"
+    else:
+        message = f"Renamed {before.get('full_name') or '(no saved name)'} to {after.get('full_name')}"
+    return {
+        "success": True,
+        "message": message,
+        "phone_jid": result.get("phone_jid"),
+        "before": before,
+        "after": after,
+        "dry_run": dry_run,
+        "changed": not dry_run and before != after,
+    }

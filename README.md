@@ -160,6 +160,23 @@ Resolve a WhatsApp contact name from a phone number, LID, or full JID.
 - "Look up who owns this number"
 - "Who is 184125298348272@lid?"
 
+#### `rename_contact`
+
+Change the saved name of one contact. **Writes to WhatsApp**: the name syncs to
+every device on the account; the contact is not messaged. Never writes to the
+phone's own address book.
+
+**Parameters:**
+
+- `phone` (required): Phone number with country code, phone JID or LID
+- `full_name` (required): The new full name
+- `first_name` (optional): First name; empty leaves it blank
+- `dry_run` (optional): `true` shows the current and new name without sending
+
+**Natural Language Examples:**
+
+- "Rename 6591234567 to Ann Tan (TZ Jul 27)"
+
 ### Message Operations
 
 #### `list_messages`
@@ -965,6 +982,33 @@ curl -X POST http://127.0.0.1:8080/api/labels/apply \
 - The contact is not messaged and cannot see labels. The change syncs to
   every device on the account.
 
+### Renaming a contact
+
+whatsmeow reads saved contact names from the `critical_unblock_low` app state
+collection but has no builder to write one, so `/api/contacts/rename` builds
+the patch itself: index `["contact", "<phone>@s.whatsapp.net"]`, action version
+2, a `ContactAction` with the new names and the contact's LID when known.
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/contacts/rename \
+  -H "Authorization: Bearer $(cat whatsapp-bridge/store/.bridge-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"phone": "12025551234", "full_name": "Ann Tan", "dry_run": true}'
+```
+
+| Field | Required | Description |
+| --------- | -------- | ------------------------------------------------------ |
+| `phone` | yes | Phone number, phone JID or LID (a LID must map to a phone in `whatsmeow_lid_map`, else `404`) |
+| `full_name` | yes | The new full name |
+| `first_name` | no | First name; empty leaves it blank |
+| `dry_run` | no | `true` returns the before/after names and the index without sending |
+
+- **`saveOnPrimaryAddressbook` is always `false`**, and callers cannot change
+  it: the bridge never asks the phone to write into its own address book.
+- **Shares the label write limit**: at most 10 writes per minute, then `429`.
+- Tested 19 Oct 2026 against a WhatsApp Business account: the server accepted
+  the patch and the new name showed on the phone.
+
 ### Caveats
 
 - **Removals can be missed between resyncs.** whatsmeow drops app state
@@ -1024,12 +1068,13 @@ flowchart LR
         HIST["/api/history"]
         LABELS["/api/labels/resync"]
         APPLY["/api/labels/apply"]
+        RENAME["/api/contacts/rename"]
         HEALTH["/api/health"]
     end
 
-    subgraph MCPTools["MCP Tools (21 total)"]
+    subgraph MCPTools["MCP Tools (22 total)"]
         direction TB
-        CONT["Contact Tools<br/>search_contacts, get_contact"]
+        CONT["Contact Tools<br/>search_contacts, get_contact, rename_contact"]
         MSG["Message Tools<br/>list_messages, send_message, etc."]
         CHAT["Chat Tools<br/>list_chats, get_chat, etc."]
         MEDIA["Media Tools<br/>send_file, download_media, etc."]
