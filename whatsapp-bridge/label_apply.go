@@ -180,11 +180,13 @@ func registerLabelApplyEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) 
 			return
 		}
 
-		if err := client.SendAppState(ctx, appstate.BuildLabelChat(target, req.LabelID, *req.Labeled)); err != nil {
+		// Not client.SendAppState: it leaves the copy under an older key behind
+		// and splits the state hash (see app_state_write.go).
+		if err := sendAppStateOverwrite(ctx, client, messageStore.waDB, appstate.BuildLabelChat(target, req.LabelID, *req.Labeled)); err != nil {
 			fail(http.StatusBadGateway, fmt.Sprintf("WhatsApp rejected the label change: %v", err))
 			return
 		}
-		// SendAppState also dispatches the change back as an event, which
+		// The write's sync-back also dispatches the change back as an event, which
 		// stores it; writing it here as well makes the result readable at once.
 		if err := messageStore.StoreLabelChat(&events.LabelAssociationChat{
 			JID: target, LabelID: req.LabelID, Timestamp: time.Now(),

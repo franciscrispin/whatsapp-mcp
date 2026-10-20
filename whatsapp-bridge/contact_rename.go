@@ -224,11 +224,13 @@ func registerContactRenameEndpoint(mux *http.ServeMux, auth func(http.HandlerFun
 			fail(http.StatusTooManyRequests, fmt.Sprintf("write limit reached (%d per minute)", labelWriteLimit))
 			return
 		}
-		if err := client.SendAppState(ctx, patch); err != nil {
+		// Not client.SendAppState: it leaves the copy under an older key behind
+		// and splits the state hash (see app_state_write.go).
+		if err := sendAppStateOverwrite(ctx, client, messageStore.waDB, patch); err != nil {
 			fail(http.StatusBadGateway, fmt.Sprintf("WhatsApp rejected the contact change: %v", err))
 			return
 		}
-		// SendAppState fetches the collection back afterwards, which applies the
+		// The write fetches the collection back afterwards, which applies the
 		// change to whatsmeow's contact store; read it to confirm.
 		if stored, err := client.Store.Contacts.GetContact(ctx, pn); err == nil {
 			result["stored"] = map[string]string{"full_name": stored.FullName, "first_name": stored.FirstName}
