@@ -298,6 +298,9 @@ func ensureMessageStoreSchema(db *sql.DB) error {
 	if err := ensureLabelSchema(db); err != nil {
 		return err
 	}
+	if err := ensureQuickReplySchema(db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2401,6 +2404,7 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 
 	// Label store endpoints (see labels.go)
 	registerLabelEndpoints(mux, auth, client, messageStore)
+	registerQuickReplyEndpoints(mux, auth, client, messageStore)
 	registerContactRenameEndpoint(mux, auth, client, messageStore)
 
 	// Health check endpoint
@@ -3109,9 +3113,13 @@ func main() {
 		case *events.Connected:
 			logger.Infof("✓ Successfully connected to WhatsApp servers")
 			go resyncLabelsIfEmpty(client, messageStore)
+			go resyncQuickRepliesIfEmpty(client, messageStore)
 
 		case *events.LabelEdit, *events.LabelAssociationChat:
 			handleLabelEvent(messageStore, v)
+
+		case *events.AppState:
+			handleQuickReplyEvent(messageStore, v)
 
 		case *events.Contact:
 			handleContactEvent(context.Background(), client.Store.LIDs, messageStore, v)

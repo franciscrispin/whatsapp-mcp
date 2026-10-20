@@ -40,6 +40,9 @@ from whatsapp import (
     get_message_context as whatsapp_get_message_context,
 )
 from whatsapp import (
+    get_quick_reply as whatsapp_get_quick_reply,
+)
+from whatsapp import (
     get_sender_name as whatsapp_get_sender_name,
 )
 from whatsapp import (
@@ -50,6 +53,9 @@ from whatsapp import (
 )
 from whatsapp import (
     list_messages as whatsapp_list_messages,
+)
+from whatsapp import (
+    list_quick_replies as whatsapp_list_quick_replies,
 )
 from whatsapp import (
     mark_messages_read as whatsapp_mark_messages_read,
@@ -700,6 +706,42 @@ def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bo
         many chats now show the new name; None on a dry run).
     """
     return whatsapp_rename_contact(phone, full_name, first_name, dry_run)
+
+
+@mcp.tool()
+def list_quick_replies(query: str | None = None, include_deleted: bool = False) -> list[dict[str, Any]]:
+    """List the WhatsApp Business quick replies (saved "/shortcut" messages) on this account.
+
+    Read-only. Quick replies are synced by the bridge into the local database, so this
+    works even if the bridge is down (it then shows the last synced state).
+
+    Args:
+        query: Optional case-insensitive text to match in the shortcut, message or keywords
+        include_deleted: Also return quick replies that were deleted in WhatsApp (default False)
+
+    Returns:
+        A list of quick replies sorted by shortcut, each with quick_reply_id, shortcut,
+        message (the full text), keywords, labels (names of linked labels), use_count,
+        deleted and updated_at
+    """
+    return whatsapp_list_quick_replies(query, include_deleted)
+
+
+@mcp.tool()
+def get_quick_reply(shortcut: str) -> dict[str, Any]:
+    """Get one WhatsApp Business quick reply by its shortcut.
+
+    Read-only.
+
+    Args:
+        shortcut: The shortcut as typed in WhatsApp, with or without the leading "/"
+                  (case-insensitive), e.g. "deposit" or "/deposit"
+
+    Returns:
+        A dictionary with success and quick_reply (same fields as list_quick_replies),
+        or success False and a message listing the known shortcuts
+    """
+    return whatsapp_get_quick_reply(shortcut)
 
 
 def shutdown_handler(signum, frame):
