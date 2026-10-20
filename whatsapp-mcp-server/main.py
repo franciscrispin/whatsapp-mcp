@@ -696,7 +696,8 @@ def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bo
 
     Returns:
         A dictionary with success, message, phone_jid, before and after
-        ({full_name, first_name}), dry_run, and changed.
+        ({full_name, first_name}), dry_run, changed, and chats_updated (how
+        many chats now show the new name; None on a dry run).
     """
     return whatsapp_rename_contact(phone, full_name, first_name, dry_run)
 

@@ -1601,4 +1601,6 @@ def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bo
         "after": after,
         "dry_run": dry_run,
         "changed": not dry_run and before != after,
+        # Chat rows whose cached name the bridge rewrote; absent on a dry run.
+        "chats_updated": result.get("chats_updated"),
     }
