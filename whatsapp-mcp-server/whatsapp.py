@@ -1604,3 +1604,83 @@ def rename_contact(phone: str, full_name: str, first_name: str = "", dry_run: bo
         # Chat rows whose cached name the bridge rewrote; absent on a dry run.
         "chats_updated": result.get("chats_updated"),
     }
+
+
+def _quick_replies_table_exists(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'quick_replies'").fetchone()
+    return row is not None
+
+
+def _load_quick_replies(include_deleted: bool) -> list[dict[str, Any]] | None:
+    """Every stored quick reply, with linked label ids resolved to names. None if the store is missing."""
+    try:
+        conn = sqlite3.connect(MESSAGES_DB_PATH)
+        try:
+            if not _quick_replies_table_exists(conn):
+                return None
+            rows = conn.execute(
+                """
+                SELECT quick_reply_id, shortcut, message, keywords, label_ids, use_count, deleted, updated_at
+                FROM quick_replies
+                WHERE ? OR deleted = 0
+                """,
+                (include_deleted,),
+            ).fetchall()
+            label_names: dict[str, str] = {}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'labels'").fetchone():
+                label_names = {r[0]: _clean_label_name(r[1]) for r in conn.execute("SELECT label_id, name FROM labels")}
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return None
+
+    replies = []
+    for r in rows:
+        label_ids = json.loads(r[4] or "[]")
+        replies.append(
+            {
+                "quick_reply_id": r[0],
+                "shortcut": r[1],
+                "message": r[2],
+                "keywords": json.loads(r[3] or "[]"),
+                "labels": [label_names.get(i, i) for i in label_ids],
+                "use_count": r[5],
+                "deleted": bool(r[6]),
+                "updated_at": r[7],
+            }
+        )
+    replies.sort(key=lambda q: q["shortcut"].casefold())
+    return replies
+
+
+def list_quick_replies(query: str | None = None, include_deleted: bool = False) -> list[dict[str, Any]]:
+    """Quick replies, optionally filtered by a case-insensitive match on shortcut, message or keywords."""
+    replies = _load_quick_replies(include_deleted) or []
+    if query:
+        q = query.strip().lstrip("/").casefold()
+        replies = [
+            r
+            for r in replies
+            if q in r["shortcut"].casefold()
+            or q in r["message"].casefold()
+            or any(q in k.casefold() for k in r["keywords"])
+        ]
+    return replies
+
+
+def get_quick_reply(shortcut: str) -> dict[str, Any]:
+    """One quick reply by its exact shortcut (case-insensitive, leading "/" optional)."""
+    wanted = (shortcut or "").strip().lstrip("/").casefold()
+    if not wanted:
+        return {"success": False, "message": "shortcut is required"}
+    replies = _load_quick_replies(include_deleted=False)
+    if replies is None:
+        return {"success": False, "message": "No quick reply store yet: the bridge has not synced quick replies"}
+    matches = [r for r in replies if r["shortcut"].lstrip("/").casefold() == wanted]
+    if not matches:
+        known = ", ".join(f"/{r['shortcut'].lstrip('/')}" for r in replies)
+        return {"success": False, "message": f"No such quick reply. Known shortcuts: {known}"}
+    if len(matches) > 1:
+        return {"success": False, "message": "Shortcut is ambiguous; rename one of the quick replies in WhatsApp first"}
+    return {"success": True, "quick_reply": matches[0]}
