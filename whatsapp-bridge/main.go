@@ -2405,6 +2405,7 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 	// Label store endpoints (see labels.go)
 	registerLabelEndpoints(mux, auth, client, messageStore)
 	registerQuickReplyEndpoints(mux, auth, client, messageStore)
+	registerAppStateRecoveryEndpoint(mux, auth, client)
 	registerContactRenameEndpoint(mux, auth, client, messageStore)
 
 	// Health check endpoint
@@ -3120,6 +3121,9 @@ func main() {
 
 		case *events.AppState:
 			handleQuickReplyEvent(messageStore, v)
+
+		case *events.AppStateSyncComplete:
+			handleAppStateRecoveryComplete(client, messageStore, v)
 
 		case *events.Contact:
 			handleContactEvent(context.Background(), client.Store.LIDs, messageStore, v)
