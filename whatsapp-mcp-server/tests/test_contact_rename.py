@@ -29,6 +29,7 @@ def bridge_calls(monkeypatch):
                 "phone_jid": f"{PHONE}@s.whatsapp.net",
                 "before": {"full_name": "Ann", "first_name": ""},
                 "after": {"full_name": "Ann Tan", "first_name": "Ann"},
+                "chats_updated": 1,
             },
         },
     }
@@ -54,6 +55,7 @@ def test_rename_contact_calls_bridge(bridge_calls):
     assert out["message"] == "Renamed Ann to Ann Tan"
     assert out["before"] == {"full_name": "Ann", "first_name": ""}
     assert out["changed"] is True
+    assert out["chats_updated"] == 1
 
 
 def test_rename_contact_dry_run(bridge_calls):

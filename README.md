@@ -1006,6 +1006,11 @@ curl -X POST http://127.0.0.1:8080/api/contacts/rename \
 - **`saveOnPrimaryAddressbook` is always `false`**, and callers cannot change
   it: the bridge never asks the phone to write into its own address book.
 - **Shares the label write limit**: at most 10 writes per minute, then `429`.
+- **Updates the cached chat name.** `get_contact` and `list_chats` read
+  `chats.name` in `messages.db`, not whatsmeow's contact store, so a rename
+  also rewrites that column for the contact's phone-JID and LID chats
+  (`chats_updated` in the response). Renames made on the phone or another
+  device arrive as contact events and update it the same way.
 - Tested 19 Oct 2026 against a WhatsApp Business account: the server accepted
   the patch and the new name showed on the phone.
 

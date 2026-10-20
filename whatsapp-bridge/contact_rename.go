@@ -9,6 +9,11 @@ package main
 // the phone to write the name into its own address book, and that is not a
 // change this bridge should be able to make. Writes share the label rate limit
 // so a runaway caller stalls instead of renaming a whole contact list.
+//
+// chats.name in messages.db is a cached copy of the contact name: it is set
+// when a chat first appears and is never re-read from whatsmeow's contact
+// store. A rename, here or on another device, therefore also rewrites that
+// copy, or get_contact and list_chats keep showing the old name.
 
 import (
 	"context"
@@ -23,6 +28,7 @@ import (
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/proto/waSyncAction"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -108,7 +114,55 @@ func buildContactRename(pn, lid types.JID, fullName, firstName string) appstate.
 	}
 }
 
-func registerContactRenameEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client) {
+// SetContactChatName rewrites the cached name of a contact's one-to-one chats.
+// Only existing rows change: a rename must not create a chat with no messages.
+func (store *MessageStore) SetContactChatName(name string, jids ...types.JID) (int64, error) {
+	var updated int64
+	for _, jid := range jids {
+		if jid.IsEmpty() {
+			continue
+		}
+		res, err := store.db.Exec("UPDATE chats SET name = ? WHERE jid = ?", name, jid.String())
+		if err != nil {
+			return updated, err
+		}
+		n, _ := res.RowsAffected()
+		updated += n
+	}
+	return updated, nil
+}
+
+// handleContactEvent applies a contact name change from WhatsApp (this bridge's
+// own rename echoed back, or one made on the phone) to the chat names. Chats
+// may be keyed by phone JID or LID, so both are updated. A contact edit with
+// no full name (a deleted contact) is left alone: there is no better name to
+// put in its place here.
+func handleContactEvent(ctx context.Context, lids pnLookup, messageStore *MessageStore, evt *events.Contact) {
+	name := strings.TrimSpace(evt.Action.GetFullName())
+	if name == "" {
+		return
+	}
+	jids := []types.JID{evt.JID.ToNonAD()}
+	var alt types.JID
+	var err error
+	switch evt.JID.Server {
+	case types.DefaultUserServer:
+		alt, err = lids.GetLIDForPN(ctx, evt.JID.ToNonAD())
+	case types.HiddenUserServer:
+		alt, err = lids.GetPNForLID(ctx, evt.JID.ToNonAD())
+	}
+	if err == nil {
+		jids = append(jids, alt)
+	}
+	if lid, perr := types.ParseJID(evt.Action.GetLidJID()); perr == nil && evt.Action.GetLidJID() != "" {
+		jids = append(jids, lid)
+	}
+	if _, err := messageStore.SetContactChatName(name, jids...); err != nil {
+		fmt.Printf("Failed to update chat name for contact %s: %v\n", evt.JID, err)
+	}
+}
+
+func registerContactRenameEndpoint(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc, client *whatsmeow.Client, messageStore *MessageStore) {
 	mux.HandleFunc("/api/contacts/rename", auth(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -178,6 +232,13 @@ func registerContactRenameEndpoint(mux *http.ServeMux, auth func(http.HandlerFun
 		// change to whatsmeow's contact store; read it to confirm.
 		if stored, err := client.Store.Contacts.GetContact(ctx, pn); err == nil {
 			result["stored"] = map[string]string{"full_name": stored.FullName, "first_name": stored.FirstName}
+		}
+		// Don't rely on the echoed events.Contact alone to refresh chats.name:
+		// write it here so the caller's next get_contact already sees it.
+		if n, err := messageStore.SetContactChatName(req.FullName, pn, lid); err != nil {
+			fmt.Printf("Renamed %s but failed to update its chat name: %v\n", pn, err)
+		} else {
+			result["chats_updated"] = n
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "result": result})
 	}))
