@@ -145,6 +145,12 @@ func resyncQuickRepliesIfEmpty(client *whatsmeow.Client, messageStore *MessageSt
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	// A full sync drops the local state first, so never start one by itself
+	// over a collection that already syncs: if the server snapshot failed to
+	// verify, the working state would be lost on every restart.
+	if v, _, err := client.Store.AppState.GetAppStateVersion(ctx, string(appstate.WAPatchRegular)); err != nil || v > 0 {
+		return
+	}
 	result, err := resyncQuickReplies(ctx, client, messageStore)
 	if err != nil {
 		fmt.Printf("Initial quick reply sync failed: %v\n", err)
