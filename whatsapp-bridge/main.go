@@ -2401,7 +2401,7 @@ func newRESTMux(client *whatsmeow.Client, messageStore *MessageStore, port int, 
 
 	// Label store endpoints (see labels.go)
 	registerLabelEndpoints(mux, auth, client, messageStore)
-	registerContactRenameEndpoint(mux, auth, client)
+	registerContactRenameEndpoint(mux, auth, client, messageStore)
 
 	// Health check endpoint
 	mux.HandleFunc("/api/health", auth(func(w http.ResponseWriter, r *http.Request) {
@@ -3112,6 +3112,9 @@ func main() {
 
 		case *events.LabelEdit, *events.LabelAssociationChat:
 			handleLabelEvent(messageStore, v)
+
+		case *events.Contact:
+			handleContactEvent(context.Background(), client.Store.LIDs, messageStore, v)
 
 		case *events.LoggedOut:
 			logger.Warnf("⚠️  Device logged out, please scan QR code to log in again")
